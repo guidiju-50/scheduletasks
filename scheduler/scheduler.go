@@ -8,10 +8,11 @@ import (
 )
 
 const (
-	defaultWorkers     = 5
-	defaultResync      = 30 * time.Second
-	defaultWakeupEarly = 200 * time.Millisecond
-	noTasksSleep       = 1 * time.Minute
+	defaultWorkers            = 5
+	defaultResync             = 30 * time.Second
+	defaultWakeupEarly        = 200 * time.Millisecond
+	noTasksSleep              = 1 * time.Minute
+	recurrentReleaseDelay     = 1 * time.Second // keep recurrent task claimed after UpdateNextRun so Run() doesn't re-enqueue on stale read
 )
 
 // WithWorkers sets the number of worker goroutines (default 5).
@@ -255,6 +256,9 @@ func (s *Scheduler) worker() {
 			if err := s.store.UpdateNextRun(req.ctx, id, nextRun, lastRun); err != nil {
 				log.Printf("scheduler: UpdateNextRun id=%d error: %v", id, err)
 			}
+			// Delay release so any Run() ReadEnabled that runs immediately after still sees this task as in-flight,
+			// avoiding duplicate enqueue when the store update is not yet visible (commit/replica lag).
+			time.Sleep(recurrentReleaseDelay)
 		} else {
 			log.Printf("scheduler: executando task one-shot id=%d; desativando", id)
 			if err := s.store.Disable(req.ctx, id, lastRun); err != nil {

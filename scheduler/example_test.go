@@ -346,3 +346,67 @@ func ExampleNewScheduler() {
 	time.Sleep(200 * time.Millisecond)
 	// Output is non-deterministic; this example only shows usage.
 }
+
+// ScheduleNotifier permite notificar o scheduler para re-ler a agenda (ex.: após CRUD noutro pacote).
+type ScheduleNotifier interface {
+	NotifyScheduleChanged()
+}
+
+// App guarda o scheduler numa struct partilhada; outros componentes chamam app.NotifySchedule().
+type App struct {
+	Sched *scheduler.Scheduler
+}
+
+// NotifySchedule re-lê a agenda; pode ser chamado por handlers ou outro código que receba *App.
+func (a *App) NotifySchedule() {
+	a.Sched.NotifyScheduleChanged()
+}
+
+// Example_schedulerInSharedStruct mostra o scheduler guardado numa struct partilhada.
+func Example_schedulerInSharedStruct() {
+	store := &stubStore{
+		tasks: []scheduler.ScheduleTask{{
+			ID: 1, StartAt: time.Now(), NextRunAt: time.Now().Add(1 * time.Hour),
+			IntervalMinutes: 1, Enabled: true,
+		}},
+	}
+	exec := &exampleExecutor{}
+	s := scheduler.NewScheduler(store, exec)
+
+	app := &App{Sched: s}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go app.Sched.Run(ctx)
+
+	// Simula outro ficheiro ou handler que tem acesso a app:
+	app.NotifySchedule()
+
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	time.Sleep(150 * time.Millisecond)
+}
+
+// Handler recebe o notifier por dependência e chama NotifyScheduleChanged quando precisar.
+func Example_schedulerPassedAsDependency() {
+	store := &stubStore{
+		tasks: []scheduler.ScheduleTask{{
+			ID: 1, StartAt: time.Now(), NextRunAt: time.Now().Add(1 * time.Hour),
+			IntervalMinutes: 1, Enabled: true,
+		}},
+	}
+	exec := &exampleExecutor{}
+	s := scheduler.NewScheduler(store, exec)
+
+	// Quem notifica recebe a interface (ou *scheduler.Scheduler).
+	var notifier ScheduleNotifier = s
+
+	// “Outro pacote”: recebe notifier na inicialização e usa quando a agenda mudar.
+	onScheduleUpdated := func() { notifier.NotifyScheduleChanged() }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go s.Run(ctx)
+	onScheduleUpdated()
+	time.Sleep(100 * time.Millisecond)
+	cancel()
+	time.Sleep(150 * time.Millisecond)
+}
